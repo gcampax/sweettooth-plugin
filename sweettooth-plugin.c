@@ -262,6 +262,7 @@ plugin_object_deallocate (NPObject *npobj)
 }
 
 static NPIdentifier get_metadata_id;
+static NPIdentifier list_extensions_id;
 static NPIdentifier enable_extension_id;
 static NPIdentifier install_extension_id;
 static NPIdentifier onextension_changed_id;
@@ -271,23 +272,22 @@ plugin_object_has_method (NPObject     *npobj,
 			  NPIdentifier  name)
 {
   return (name == get_metadata_id ||
+	  name == list_extensions_id ||
 	  name == enable_extension_id ||
 	  name == install_extension_id);
 }
 
 static bool
-plugin_get_metadata (PluginObject  *obj,
-		     NPVariant     *result)
+plugin_list_extensions (PluginObject  *obj,
+			NPVariant     *result)
 {
   GError *error = NULL;
   GVariant *res;
   const gchar *json;
   gchar *buffer;
 
-  g_debug ("invoking getMetadata");
-
   res = g_dbus_proxy_call_sync (obj->proxy,
-				"GetExtensionsMetadata",
+				"ListExtensions",
 				NULL, /* parameters */
 				G_DBUS_CALL_FLAGS_NONE,
 				-1, /* timeout */
@@ -345,7 +345,41 @@ plugin_install_extension (PluginObject *obj,
   return TRUE;
 }
 
-			 
+static bool
+plugin_get_metadata (PluginObject *obj,
+		     NPString      uuid,
+		     NPVariant    *result)
+{
+  GError *error = NULL;
+  GVariant *res;
+  const gchar *json;
+  gchar *buffer;
+
+  res = g_dbus_proxy_call_sync (obj->proxy,
+				"GetExtensionInfo",
+				g_variant_new ("(s)", uuid.UTF8Characters),
+				G_DBUS_CALL_FLAGS_NONE,
+				-1, /* timeout */
+				NULL, /* cancellable */
+				&error);
+
+  if (!res)
+    {
+      g_warning ("Failed to retrieve extension list: %s", error->message);
+      g_error_free (error);
+      return FALSE;
+    }
+
+  g_variant_get(res, "(&s)", &json);
+
+  buffer = funcs.memalloc (strlen (json));
+  strcpy(buffer, json);
+
+  STRINGZ_TO_NPVARIANT (buffer, *result);
+  g_variant_unref (res);
+
+  return TRUE;
+}
 
 static bool
 plugin_object_invoke (NPObject        *npobj,
@@ -364,8 +398,15 @@ plugin_object_invoke (NPObject        *npobj,
 
   VOID_TO_NPVARIANT (*result);
 
-  if (name == get_metadata_id)
+  if (name == list_extensions_id)
     return plugin_list_extensions (obj, result);
+  else if (name == get_metadata_id)
+    {
+      g_return_val_if_fail (argc >= 1, FALSE);
+      g_return_val_if_fail (NPVARIANT_IS_STRING(args[0]), FALSE);
+
+      return plugin_get_metadata (obj, NPVARIANT_TO_STRING(args[0]), result);
+    }
   else if (name == enable_extension_id)
     {
       g_return_val_if_fail (argc >= 2, FALSE);
@@ -459,7 +500,8 @@ static void
 init_methods_and_properties (void)
 {
   /* this is the JS public API; it is manipulated through NPIdentifiers for speed */
-  get_metadata_id = funcs.getstringidentifier ("getMetadata");
+  get_metadata_id = funcs.getstringidentifier ("getExtensionMetadata");
+  list_extensions_id = funcs.getstringidentifier ("listExtensions");
   enable_extension_id = funcs.getstringidentifier ("setExtensionEnabled");
   install_extension_id = funcs.getstringidentifier ("installExtension");
 
