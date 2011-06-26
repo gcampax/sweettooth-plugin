@@ -206,19 +206,19 @@ on_shell_signal (GDBusProxy *proxy,
 {
   PluginObject *obj = user_data;
 
-  if (strcmp (signal_name, "ExtensionEnableChanged") == 0)
+  if (strcmp (signal_name, "ExtensionStatusChanged") == 0)
     {
       gchar *uuid;
-      gboolean enabled;
+      gint32 status;
       NPVariant args[2];
       NPVariant result;
 
-      g_variant_get (parameters, "(sb)", &uuid, &enabled);
+      g_variant_get (parameters, "(si)", &uuid, &status);
       STRINGZ_TO_NPVARIANT (uuid, args[0]);
-      BOOLEAN_TO_NPVARIANT (enabled, args[1]);
+      INT32_TO_NPVARIANT (status, args[1]);
 
       funcs.invokeDefault (obj->instance, obj->listener,
-			 args, 2, &result);
+			   args, 2, &result);
 
       funcs.releasevariantvalue (&result);
     }
@@ -257,7 +257,7 @@ plugin_object_deallocate (NPObject *npobj)
   g_slice_free (PluginObject, obj);
 }
 
-static NPIdentifier list_extensions_id;
+static NPIdentifier get_metadata_id;
 static NPIdentifier enable_extension_id;
 static NPIdentifier install_extension_id;
 static NPIdentifier onextension_changed_id;
@@ -266,27 +266,24 @@ static bool
 plugin_object_has_method (NPObject     *npobj,
 			  NPIdentifier  name)
 {
-  return (name == list_extensions_id ||
+  return (name == get_metadata_id ||
 	  name == enable_extension_id ||
 	  name == install_extension_id);
 }
 
 static bool
-plugin_list_extensions (PluginObject  *obj,
-			NPVariant     *result)
+plugin_get_metadata (PluginObject  *obj,
+		     NPVariant     *result)
 {
   GError *error = NULL;
   GVariant *res;
-  GVariantIter iter;
-  GString *str;
-  gchar *uuid;
-  gboolean enabled;
+  const gchar *json;
   gchar *buffer;
 
-  g_debug ("invoking listExtensions");
+  g_debug ("invoking getMetadata");
 
   res = g_dbus_proxy_call_sync (obj->proxy,
-				"ListExtensions",
+				"GetExtensionsMetadata",
 				NULL, /* parameters */
 				G_DBUS_CALL_FLAGS_NONE,
 				-1, /* timeout */
@@ -300,23 +297,13 @@ plugin_list_extensions (PluginObject  *obj,
       return FALSE;
     }
 
-  str = g_string_new ("[");
+  g_variant_get(res, "(&s)", &json);
 
-  g_variant_iter_init (&iter, res);
-  while (g_variant_iter_loop (&iter, "(sb)", &uuid, &enabled))
-    g_string_append_printf (str, "{ 'uuid': '%s', 'enabled': %s },",
-			    &uuid, enabled ? "true" : "false");
-
-  g_variant_unref (res);
-
-  if (str->str[str->len-1] == ',') /* remove trailing comma */
-    g_string_truncate (str, str->len-1);
-
-  buffer = funcs.memalloc (str->len);
-  memcpy (buffer, str->str, str->len);
+  buffer = funcs.memalloc (strlen (json));
+  strcpy(buffer, json);
 
   STRINGZ_TO_NPVARIANT (buffer, *result);
-  g_string_free (str, TRUE);
+  g_variant_unref (res);
 
   return TRUE;
 }
@@ -376,7 +363,7 @@ plugin_object_invoke (NPObject        *npobj,
 
   VOID_TO_NPVARIANT (*result);
 
-  if (name == list_extensions_id)
+  if (name == get_metadata_id)
     return plugin_list_extensions (obj, result);
   else if (name == enable_extension_id)
     {
@@ -471,7 +458,7 @@ static void
 init_methods_and_properties (void)
 {
   /* this is the JS public API; it is manipulated through NPIdentifiers for speed */
-  list_extensions_id = funcs.getstringidentifier ("listExtensions");
+  get_metadata_id = funcs.getstringidentifier ("getMetadata");
   enable_extension_id = funcs.getstringidentifier ("setExtensionEnabled");
   install_extension_id = funcs.getstringidentifier ("installExtension");
 
