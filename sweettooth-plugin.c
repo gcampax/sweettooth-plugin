@@ -210,17 +210,21 @@ on_shell_signal (GDBusProxy *proxy,
     {
       gchar *uuid;
       gint32 status;
-      NPVariant args[2];
+      gchar *error;
+      NPVariant args[3];
       NPVariant result;
 
-      g_variant_get (parameters, "(si)", &uuid, &status);
+      g_variant_get (parameters, "(sis)", &uuid, &status, &error);
       STRINGZ_TO_NPVARIANT (uuid, args[0]);
       INT32_TO_NPVARIANT (status, args[1]);
+      STRINGZ_TO_NPVARIANT (error, args[2]);
 
       funcs.invokeDefault (obj->instance, obj->listener,
-			   args, 2, &result);
+			   args, 3, &result);
 
       funcs.releasevariantvalue (&result);
+      g_free (uuid);
+      g_free (error);
     }
 }
 
@@ -329,18 +333,15 @@ static bool
 plugin_install_extension (PluginObject *obj,
 			  NPString      uuid)
 {
-  gchar *uri = g_strdup_printf (ORIGIN "/downloads/%s.tar.xz", uuid.UTF8Characters);
-
   g_dbus_proxy_call (obj->proxy,
 		     "InstallRemoteExtension",
-		     g_variant_new ("(s)", uri),
+		     g_variant_new ("(s)", uuid.UTF8Characters),
 		     G_DBUS_CALL_FLAGS_NONE,
 		     -1, /* timeout */
 		     NULL, /* cancellable */
 		     NULL, /* callback */
 		     NULL /* user_data */);
 
-  g_free (uri);
   return TRUE;
 }
 
